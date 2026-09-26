@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { composePlan } from '../../../lib/plan.mjs';
 
 export const maxDuration = 60;
 const MAX_BODY = 38000;
@@ -33,6 +34,10 @@ export async function POST(request) {
     if (serverKey && !suppliedKey && request.headers.get('x-app-access-code') !== accessCode) return NextResponse.json({ error: 'Access code required.' }, { status: 401 });
     const key = suppliedKey || serverKey;
     if (!key) return NextResponse.json({ error: 'Add your Gemini API key in Settings to use AI.' }, { status: 400 });
+    if (mode === 'brief') {
+      if (typeof context.originalIdea !== 'string' || context.originalIdea.trim().length < 24) return NextResponse.json({ error: 'Describe your idea before generating a plan.' }, { status: 400 });
+      return NextResponse.json({ brief: composePlan(context) }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45000);
     let response;
