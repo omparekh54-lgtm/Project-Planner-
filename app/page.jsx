@@ -1,8 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { newProject, approveBrief, reviseBrief, acceptSuggestions, canGenerate, registerEvaluation, steps, scopeNames, destinations } from '../lib/workflow.mjs';
 
 const STORAGE = 'project-planner-v1';
+const cloudUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const cloudKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const cloud = cloudUrl && cloudKey ? createClient(cloudUrl, cloudKey) : null;
 const example = 'I want to make an app where someone uploads a file, gets a six-digit code, and another person enters the code to download it. Files should expire after seven days.';
 function date(ts) { return new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short', year: 'numeric' }); }
 function icon(name) { return ({idea:'✦', improve:'✧', decide:'◇', brief:'▤', build:'▣'})[name]; }
@@ -11,6 +15,10 @@ export default function Home() {
   const [projects, setProjects] = useState([]);
   const [active, setActive] = useState(null);
   const [ready, setReady] = useState(false);
+  const [cloudUser, setCloudUser] = useState(null);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [email, setEmail] = useState('');
+  const [loginMessage, setLoginMessage] = useState('');
   const [key, setKey] = useState('');
   const [accessCode, setAccessCode] = useState('');
   const [settings, setSettings] = useState(false);
@@ -23,12 +31,43 @@ export default function Home() {
   const importRef = useRef(null);
 
   useEffect(() => { try { const saved = JSON.parse(localStorage.getItem(STORAGE) || '{}'); if (Array.isArray(saved.projects)) { setProjects(saved.projects); setActive(saved.active || saved.projects[0]?.id || null); } } catch {} setReady(true); }, []);
-  useEffect(() => { if (ready) localStorage.setItem(STORAGE, JSON.stringify({ projects, active })); }, [projects, active, ready]);
+  useEffect(() => { if (ready) { try { localStorage.setItem(STORAGE, JSON.stringify({ projects, active })); } catch { setError('Browser storage is full. Export a backup of your idea.'); } } }, [projects, active, ready]);
+  useEffect(() => {
+    if (!cloud) return;
+    let mounted = true;
+    async function load(user) {
+      setCloudLoaded(false); setCloudUser(user);
+      if (!user) return;
+      const { data, error: loadError } = await cloud.from('projects').select('id,document').order('updated_at', { ascending: false });
+      if (!mounted) return;
+      if (loadError) { setError('Could not load cloud projects. Check the database setup and try reloading.'); return; }
+      const remote = data.map(row => row.document).filter(item => item && typeof item.id === 'string');
+      setProjects(remote);
+      setActive(current => remote.some(p => p.id === current) ? current : remote[0]?.id || null);
+      setCloudLoaded(true);
+    }
+    cloud.auth.getUser().then(({data}) => load(data.user));
+    const {data: {subscription}} = cloud.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) load(session.user);
+      if (event === 'SIGNED_OUT') { setCloudUser(null); setCloudLoaded(false); setProjects([]); setActive(null); }
+    });
+    return () => { mounted = false; subscription.unsubscribe(); };
+  }, []);
+  useEffect(() => {
+    if (!cloud || !cloudUser || !cloudLoaded || !ready) return;
+    const timer = setTimeout(async () => {
+      if (!projects.length) return;
+      const {error: saveError} = await cloud.from('projects').upsert(projects.map(p => ({id:p.id,user_id:cloudUser.id,document:p,updated_at:new Date(p.updatedAt || Date.now()).toISOString()})));
+      if (saveError) setError('Could not sync your latest changes. Export a backup before leaving this page.');
+    }, 850);
+    return () => clearTimeout(timer);
+  }, [projects, cloudUser, cloudLoaded, ready]);
   const project = projects.find(p => p.id === active);
   function update(change) { setProjects(all => all.map(p => p.id === active ? { ...p, ...change, updatedAt: Date.now() } : p)); }
   function replace(updated) { setProjects(all => all.map(p => p.id === active ? updated : p)); }
   function add() { const p = newProject(); setProjects(all => [p, ...all]); setActive(p.id); setError(''); setFeedbackText(''); }
-  function remove() { if (!confirm('Delete this idea and its local history?')) return; setProjects(all => all.filter(p => p.id !== active)); setActive(null); }
+  async function remove() { if (!confirm('Delete this idea and its history?')) return; if (cloud && cloudUser) { const {error: deleteError} = await cloud.from('projects').delete().eq('id', active); if (deleteError) { setError('Could not delete this cloud project. Please retry.'); return; } } setProjects(all => all.filter(p => p.id !== active)); setActive(null); }
+  async function signIn() { if (!cloud || !email.trim()) return; const {error: authError} = await cloud.auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin}}); setLoginMessage(authError ? authError.message : 'Check your email for your sign-in link.'); }
   async function run(mode, context) {
     setBusy(mode); setError('');
     try {
@@ -69,6 +108,8 @@ export default function Home() {
   const lastReview = project?.feedback?.filter(f => f.step === project.currentPrompt).at(-1);
 
   if (!ready) return <div className="loading">Opening workspace…</div>;
+  if (cloud && !cloudUser) return <div className="login"><div className="brand"><div className="brand-mark">✳</div><div><strong>FORMA</strong><small>idea → execution</small></div></div><section className="card"><div className="eyebrow">YOUR PRIVATE WORKSPACE</div><h1>Make your next idea real.</h1><p>Sign in to save your plans and pick up where you left off on any device.</p><label className="field-label" htmlFor="login-email">EMAIL ADDRESS</label><input id="login-email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={e=>setEmail(e.target.value)}/><button className="primary full" onClick={signIn}>Email me a sign-in link ↗</button>{loginMessage && <p role="status">{loginMessage}</p>}</section></div>;
+  if (cloud && !cloudLoaded) return <div className="loading">Loading your workspace…</div>;
   return <div className="app">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">✳</div><div><strong>FORMA</strong><small>idea → execution</small></div></div>
@@ -79,7 +120,7 @@ export default function Home() {
       <div className="side-footer"><div className="side-footer-icon">✦</div><div><strong>Start with a thought.</strong><span>Leave with a build plan.</span></div></div>
     </aside>
     <main className="main">
-      <header className="topbar"><div className="breadcrumb">Workspace <span>/</span> {project ? project.title : 'Overview'}</div><div className="top-actions"><button className="text-button" onClick={() => importRef.current?.click()}>Import</button><input ref={importRef} type="file" accept="application/json" hidden onChange={e => { importProject(e.target.files?.[0]); e.target.value = ''; }}/><button className="settings-button" onClick={() => setSettings(true)}>⚙ <span>Settings</span></button></div></header>
+      <header className="topbar"><div className="breadcrumb">Workspace <span>/</span> {project ? project.title : 'Overview'}</div><div className="top-actions"><button className="text-button" onClick={() => importRef.current?.click()}>Import</button><input ref={importRef} type="file" accept="application/json" hidden onChange={e => { importProject(e.target.files?.[0]); e.target.value = ''; }}/>{cloudUser && <button className="text-button" onClick={() => cloud.auth.signOut()}>Sign out</button>}<button className="settings-button" onClick={() => setSettings(true)}>⚙ <span>Settings</span></button></div></header>
       {!project ? <section className="empty-state"><div className="eyebrow">THE SPACE BETWEEN WHAT IF AND WHAT'S NEXT</div><h1>Good ideas deserve<br/><em>a clear way forward.</em></h1><p>Turn a rough thought into an approved plan, then build it one verified prompt at a time.</p><button className="primary" onClick={add}>Start a new idea <span>↗</span></button><div className="empty-stages"><span>01 &nbsp; Shape it</span><span>02 &nbsp; Confirm it</span><span>03 &nbsp; Build it</span></div></section> : <div className="workspace">
         <div className="page-head"><div><div className="eyebrow">YOUR PROJECT WORKSPACE · {scopeNames[project.scope].toUpperCase()}</div><h1>{project.step === 'idea' ? 'Start with a spark.' : project.step === 'improve' ? 'Make it stronger.' : project.step === 'decide' ? 'Make the key calls.' : project.step === 'brief' ? 'Get aligned.' : 'Let’s make it real.'}</h1><p>{project.step === 'idea' ? 'Tell us what you want to make. It does not have to be polished.' : project.step === 'improve' ? 'Review each idea on its own terms. Your decisions shape the final plan.' : project.step === 'decide' ? 'A few answers now will make the build instructions much clearer.' : project.step === 'brief' ? 'Edit the plan until it says exactly what you mean. Then confirm it.' : 'Work through one prompt at a time, checking the result before moving on.'}</p></div><div className="head-tools"><button className="outline tiny" onClick={exportProject}>↓ Export</button><button className="outline tiny danger" onClick={remove}>Delete</button></div></div>
         <nav className="steps">{steps.map((s, i) => <button key={s} disabled={!canNavigate(s)} onClick={() => { update({ step:s }); setError(''); }} className={'step ' + (project.step === s ? 'active' : '')}><span>{icon(s)}</span><div><small>0{i+1}</small>{({idea:'The idea',improve:'Improve',decide:'Decisions',brief:'The brief',build:'Build'})[s]}</div></button>)}</nav>
