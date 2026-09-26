@@ -1,9 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newProject, approveBrief, reviseBrief, acceptSuggestions, canGenerate, registerEvaluation } from '../lib/workflow.mjs';
+import { newProject, approveBrief, reviseBrief, acceptSuggestions, choicesComplete, canGenerate, registerEvaluation, steps } from '../lib/workflow.mjs';
 
 test('only accepted suggestions enter brief input', () => {
   const p = newProject(); p.suggestions = [{ text: 'Add accounts', status: 'rejected' }, { text: 'Add expiry', status: 'accepted' }];
+  assert.deepEqual(acceptSuggestions(p), ['Add expiry']);
+});
+test('all suggestions must be accepted or passed before generating a plan', () => {
+  const p = newProject();
+  assert.deepEqual(steps, ['idea', 'improve', 'build']);
+  assert.equal(choicesComplete(p), false);
+  p.suggestions = [{ text: 'Add accounts', status: 'pending' }, { text: 'Add expiry', status: 'accepted' }];
+  assert.equal(choicesComplete(p), false);
+  p.suggestions[0].status = 'rejected';
+  assert.equal(choicesComplete(p), true);
   assert.deepEqual(acceptSuggestions(p), ['Add expiry']);
 });
 test('approval versions the brief and edits invalidate generated prompts', () => {

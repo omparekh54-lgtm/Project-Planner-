@@ -1,6 +1,6 @@
 # Forma — idea to build
 
-Forma helps someone turn a rough product idea into an approved project brief, then guides them through builder-specific prompts, reviewing results before moving to the next step.
+Forma turns a rough product idea into suggested improvements. Accept or pass each suggestion, choose a builder, and confirm once to generate a project plan and a series of build prompts. No further writing is required.
 
 ## Run locally
 
@@ -18,10 +18,10 @@ Connect this GitHub repository to Vercel as a Next.js project. Set `GEMINI_API_K
 
 ## Data and limits
 
-With Supabase configured, sign-in and row-level security keep each user's projects separate and sync their project documents. Without it, ideas and project history are saved in the user's browser with localStorage. Use **Export** for a JSON backup and **Import** to restore it as an unapproved draft. Browser storage can be cleared by the browser. Feedback review evaluates only the evidence the user pasted; it cannot inspect the actual builder or repository. The app cannot certify deployment without verifiable supplied evidence.
+With Supabase configured, sign-in and row-level security keep each user's projects separate and sync their project documents. Without it, ideas and project history are saved in the user's browser with localStorage. Use **Export** for a JSON backup and **Import** to restore it as an unapproved draft. Browser storage can be cleared by the browser. Moving between prompts only tracks which prompt is being viewed; it does not verify the builder's work.
 
 The API endpoint limits body length, validates response shapes, and returns generic upstream errors without echoing credentials. With a shared server key, configure `APP_ACCESS_CODE` before going public. For a multi-user product, add authenticated users, server rate limiting, and a database before distributing access broadly.
 
 ## Checks
 
-Run `npm test` for approval/versioning and review progression invariants, then `npm run build` for the production build.
+Run `npm test` for suggestion selection and approval/versioning invariants, then `npm run build` for the production build.
